@@ -1,8 +1,12 @@
+import os
+
 from mahilo.agent_manager import AgentManager
 from mahilo.server import ServerManager
 from mahilo.templates.centralized.dispatcher import Dispatcher
 from mahilo.templates.centralized.plumber import Plumber
 from mahilo.templates.centralized.mold_specialist import MoldSpecialist
+os.environ["PROXY_URL"] = "http://127.0.0.1:7890"
+
 
 # initialize the agent manager
 manager = AgentManager()
