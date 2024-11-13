@@ -169,5 +169,5 @@ class ServerManager:
                             await ws.send_text(message)
             await asyncio.sleep(1)
 
-    def run(self, host: str = "0.0.0.0", port: int = 8000):
+    def run(self, host: str = "0.0.0.0", port: int = 5400):
         uvicorn.run(self.app, host=host, port=port)
