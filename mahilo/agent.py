@@ -327,7 +327,7 @@ class BaseAgent:
         await openai_ws.send(json.dumps(session_update))
 
     async def _receive_from_client(self, websocket: WebSocket, openai_ws: WebSocketClientProtocol) -> None:
-        """Receive a message from the client."""
+        """Receive a message from the client.发送数据给openai"""
         try:
             async for message in websocket.iter_json():
                 if message['event'] == 'media' and openai_ws.open:
@@ -343,7 +343,7 @@ class BaseAgent:
                 await openai_ws.close()
 
     async def _send_to_client(self, websocket: WebSocket, openai_ws: WebSocketClientProtocol) -> None:
-        """Send a message to the client."""
+        """Send a message to the client.，发送数据给前端,websocket代表前端"""
         available_functions = {
             "chat_with_agent": self.chat_with_agent,
         }
@@ -351,8 +351,16 @@ class BaseAgent:
             async for openai_message in openai_ws:
                 response = json.loads(openai_message)
                 function_call_args = {}
-                if response['type'] == 'session.updated':
+                if response['type'] == 'error':
+                    response_create = {
+                        "event": "error",
+                        "response": response["error"]
+                    }
+                    await websocket.send_json(response_create) # 错误信息，发送给前端
+                if response['type'] == 'session.updated': #表示session已经更新成功
                     print("Session updated successfully:", response)
+                if response['type'] == 'session.created': #创建 Session 时返回。当新连接建立为第一个服务器事件时自动发出
+                    print("Session created successfully:", response)
                 if response['type'] == 'response.audio.delta' and response.get('delta'):
                     try:
                         audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
@@ -411,6 +419,7 @@ class BaseAgent:
                             }
                         }
                         await openai_ws.send(json.dumps(response_create))
+
         except Exception as e:
             print(f"Error in send_to_client: {e}")
 
