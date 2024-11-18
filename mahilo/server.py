@@ -5,6 +5,7 @@ from typing import Dict
 import uvicorn
 import asyncio
 import uuid
+import logging
 
 import websockets
 
@@ -42,10 +43,11 @@ class ServerManager:
             agent = self.agent_manager.get_agent(agent_type)
             if not agent:
                 self.console.print(f"[bold red]⛔  Agent type not found:[/bold red] [green]{agent_type}[/green]")
+                logging.warning(f"Agent type not found: {agent_type}")
                 await websocket.send_text(f"Error: Agent type '{agent_type}' is not registered with the server")
                 await websocket.close(1008)  # Using 1008 (Policy Violation) status code
                 return
-
+            logging.info("️ New voice stream connection for agent type: " + agent_type)
             self.console.print(
                 f"[bold blue]🎙️ New voice stream connection[/bold blue] for agent type: [green]{agent_type}[/green]")
 
@@ -62,6 +64,7 @@ class ServerManager:
 
             try:
                 if self.openai_key:
+                    logging.info("OpenaiKey配置成功，使用Openai的配置")
                     headers = (
                         {
                             "Authorization": f"Bearer {self.openai_key}",
@@ -70,6 +73,7 @@ class ServerManager:
                     )
                     ws_url = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01"
                 else:
+                    logging.info(f"Azure OpenAI配置成功，使用Azure OpenAI的配置")
                     headers = (
                         {"api-key": self.key}
                     )
@@ -77,6 +81,7 @@ class ServerManager:
                 # add params to the url without using urllib
                 # 双向数据流的传输是一直连接
                 if self.proxy_url:
+                    logging.info("使用代理连接Openai WebSocket")
                     proxy = Proxy.from_url(self.proxy_url)
                     async with proxy_connect(ws_url, extra_headers=headers, proxy=proxy) as openai_ws:
                         print("Connected to Openai WebSocket With Proxy.")
@@ -86,6 +91,7 @@ class ServerManager:
                             agent._send_to_client(websocket, openai_ws)
                         )
                 else:
+                    logging.info("直接连接Openai WebSocket")
                     async with websockets.connect(ws_url, extra_headers=headers) as openai_ws:
                         await agent._send_session_update(openai_ws)
                         await asyncio.gather(
@@ -154,6 +160,18 @@ class ServerManager:
         async def health_check(websocket: WebSocket):
             await websocket.accept()
             await websocket.close()
+
+        @self.app.websocket("/ping")
+        async def ping_check(websocket: WebSocket):
+            await websocket.accept()
+            data = await websocket.receive_text()
+            print(f"Received message: {data}")
+            await websocket.send_text("pong")
+            await websocket.close()
+
+        @self.app.api_route("/ping", methods=["GET", "POST"])
+        async def root():
+            return "Pong"
 
     async def _handle_inter_agent_communication(self):
         while True:

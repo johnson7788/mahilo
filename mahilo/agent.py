@@ -8,6 +8,7 @@ from openai import OpenAI
 from websockets import WebSocketClientProtocol
 from rich.console import Console
 from rich.traceback import install
+import logging
 
 console = Console()
 install()  #
@@ -330,11 +331,13 @@ class BaseAgent:
         """Receive a message from the client.发送数据给openai"""
         try:
             async for message in websocket.iter_json():
+                logging.info(f"收到前端发来的数据,{message}")
                 if message['event'] == 'media' and openai_ws.open:
                     audio_append = {
                         "type": "input_audio_buffer.append",
                         "audio": message['media']['payload']
                     }
+                    logging.info(f"收到前端发来的音频数据,{audio_append}，发送给Openai")
                     await openai_ws.send(json.dumps(audio_append))
                 # TODO: Handle other event types if needed
         except WebSocketDisconnect:
@@ -350,6 +353,9 @@ class BaseAgent:
         try:
             async for openai_message in openai_ws:
                 response = json.loads(openai_message)
+                informaion = {"event": "message", "response": response}
+                logging.info(f"收到Openai返回的数据,{response}")
+                await websocket.send_json(informaion)  # 所有信息都发送给前端
                 function_call_args = {}
                 if response['type'] == 'error':
                     response_create = {
