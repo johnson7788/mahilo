@@ -13,6 +13,9 @@ import logging
 console = Console()
 install()  #
 
+# 获取模块专属日志记录器,就是日志的前缀名称会改变
+logger = logging.getLogger(__name__)
+
 # Initialize the OpenAI client
 try:
     client = OpenAI(
@@ -92,6 +95,7 @@ class BaseAgent:
                 }
             },
         ]
+        TOOLS = [] # 暂时不用工具
         return TOOLS
     
     @property
@@ -141,28 +145,23 @@ class BaseAgent:
         return TOOLS
     
     def prompt_message(self) -> str:
-        """Return a prompt message for the agent."""
-        available_agents = self.get_contactable_agents_with_description()
-        console.print("[bold blue]🤖 Available Agents:[/bold blue]")
-        for agent_type, desc in available_agents.items():
-            console.print(f"  [green]▪[/green] [cyan]{agent_type}:[/cyan] [dim]{desc}[/dim]")
-
-        PROMPT = f"""
-        You are an AI agent of type {self.TYPE} in a multi-agent system. Your description is: {self.description}. Keep your responses concise. 
+        """Return a prompt message for the agent.
+        原始prompt
+        You are an AI agent of type {self.TYPE} in a multi-agent system. Your description is: {self.description}. Keep your responses concise.
 
         1. User interaction:
         - You are in conversation with a user. You should just output what you want to know from the user directly.
         - All agent communications and internal monologues don't need to be returned. Just return what you want to know from the user.
         - You should not always use the chat_with_agent tool. Only use it when you need to ask another agent a question or give it information.
-        - Strictly assume the role you are given in the description. Don't assume roles. Listen to what your user says and follow it. 
+        - Strictly assume the role you are given in the description. Don't assume roles. Listen to what your user says and follow it.
 
         2. Inter-agent Communication:
         - The Pending questions are the questions that you have received from other agents. You have to respond to them.
         - Use the 'chat_with_agent' function ONLY when you need new information that isn't already available in the context.
         - You will receive the last 7 messages from other agents' conversations in this format:
-          "Other Conversations: <AgentType>:" followed by a series of messages labeled with "user" and "assistant". the 
+          "Other Conversations: <AgentType>:" followed by a series of messages labeled with "user" and "assistant". the
           user would be the other agent's human and the assistant would be the other agent.
-        
+
         3. Using External Context:
         - External conversations are provided for context only - DO NOT respond to them directly
         - Only use this information to enhance your understanding of the overall situation
@@ -178,11 +177,18 @@ class BaseAgent:
         - Use external context wisely - don't interact with those conversations directly.
 
         Refer to your description for specific details about your role and responsibilities.
+
         """
+        available_agents = self.get_contactable_agents_with_description()
+        console.print("[bold blue]🤖 Available Agents:[/bold blue]")
+        for agent_type, desc in available_agents.items():
+            console.print(f"  [green]▪[/green] [cyan]{agent_type}:[/cyan] [dim]{desc}[/dim]")
+
+        PROMPT = self.description  # 改成了直接和Agent的相同的prompt,暂时不使用多Agent
         return PROMPT
 
     def process_message(self, message: str = None) -> Dict[str, str]:
-        """Process a message and return a response. 
+        """Process a message and return a response. 普通接口，不是realtime接口
         
         If message is not provided, it will use the last message from the queue.
 
@@ -302,15 +308,17 @@ class BaseAgent:
             "activated_agents": [agent.TYPE for agent in activated_agents]
         }
     
-    async def _send_session_update(self, openai_ws: WebSocketClientProtocol) -> None:
-        """Send the session update to the OpenAI WebSocket."""
+    async def _send_session_update(self, openai_ws: WebSocketClientProtocol, voice:str="ash") -> None:
+        """Send the session update to the OpenAI WebSocket.
+        voice支持： ash、ballad、coral、sage 和 verse
+        """
         session_update = {
             "event_id": f"event_{self.TYPE}_{id(self)}",
             "type": "session.update",
             "session": {
                 "modalities": ["text", "audio"],
                 "instructions": self.prompt_message(),
-                "voice": "alloy",
+                "voice": voice,
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "turn_detection": {
@@ -326,18 +334,38 @@ class BaseAgent:
         }
         print(f'Sending session update for {self.TYPE}:', json.dumps(session_update))        
         await openai_ws.send(json.dumps(session_update))
+    async def _send_first_message(self, openai_ws: WebSocketClientProtocol) -> None:
+        """发送第1条消息给openai,让Openai开始提问
+        """
+        first_message = {
+            "event_id": f"event_{self.TYPE}_{id(self)}",
+            "type": "conversation.item.create",
+            "item": {
+                "id": "msg_001",
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": "Hello"
+                    }
+                ]
+            }
+        }
+        print(f'发送第1条消息给openai for {self.TYPE}:', json.dumps(first_message))
+        await openai_ws.send(json.dumps(first_message))
 
     async def _receive_from_client(self, websocket: WebSocket, openai_ws: WebSocketClientProtocol) -> None:
         """Receive a message from the client.发送数据给openai"""
         try:
             async for message in websocket.iter_json():
-                logging.info(f"收到前端发来的数据,{message}")
+                logger.info(f"收到前端发来的数据,{message}")
                 if message['event'] == 'media' and openai_ws.open:
                     audio_append = {
                         "type": "input_audio_buffer.append",
                         "audio": message['media']['payload']
                     }
-                    logging.info(f"收到前端发来的音频数据,{audio_append}，发送给Openai")
+                    logger.info(f"收到前端发来的音频数据,{audio_append}，发送给Openai")
                     await openai_ws.send(json.dumps(audio_append))
                 # TODO: Handle other event types if needed
         except WebSocketDisconnect:
@@ -354,7 +382,7 @@ class BaseAgent:
             async for openai_message in openai_ws:
                 response = json.loads(openai_message)
                 informaion = {"event": "message", "response": response}
-                logging.info(f"收到Openai返回的数据,{response}")
+                logger.info(f"收到Openai返回的数据,{response}")
                 await websocket.send_json(informaion)  # 所有信息都发送给前端
                 function_call_args = {}
                 if response['type'] == 'error':

@@ -15,6 +15,8 @@ from rich.traceback import install
 ## TODO add instructor
 
 from .agent_manager import AgentManager
+# 获取模块专属日志记录器,就是日志的前缀名称会改变
+logger = logging.getLogger(__name__)
 
 
 class ServerManager:
@@ -37,17 +39,18 @@ class ServerManager:
 
     def _setup_routes(self):
         @self.app.websocket("/ws/voice-stream/{agent_type}")
-        async def voice_stream_endpoint(websocket: WebSocket, agent_type: str):
+        async def voice_stream_endpoint(websocket: WebSocket, agent_type: str, voice: str = "ash"):
+            """ws://yourdomain/ws/voice-stream/{agent_type}?voice={voice_value}"""
             await websocket.accept()
 
             agent = self.agent_manager.get_agent(agent_type)
             if not agent:
                 self.console.print(f"[bold red]⛔  Agent type not found:[/bold red] [green]{agent_type}[/green]")
-                logging.warning(f"Agent type not found: {agent_type}")
+                logger.warning(f"Agent type not found: {agent_type}")
                 await websocket.send_text(f"Error: Agent type '{agent_type}' is not registered with the server")
                 await websocket.close(1008)  # Using 1008 (Policy Violation) status code
                 return
-            logging.info("️ New voice stream connection for agent type: " + agent_type)
+            logger.info("️ New voice stream connection for agent type: " + agent_type)
             self.console.print(
                 f"[bold blue]🎙️ New voice stream connection[/bold blue] for agent type: [green]{agent_type}[/green]")
 
@@ -64,7 +67,7 @@ class ServerManager:
 
             try:
                 if self.openai_key:
-                    logging.info("OpenaiKey配置成功，使用Openai的配置")
+                    logger.info("OpenaiKey配置成功，使用Openai的配置")
                     headers = (
                         {
                             "Authorization": f"Bearer {self.openai_key}",
@@ -73,7 +76,7 @@ class ServerManager:
                     )
                     ws_url = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01"
                 else:
-                    logging.info(f"Azure OpenAI配置成功，使用Azure OpenAI的配置")
+                    logger.info(f"Azure OpenAI配置成功，使用Azure OpenAI的配置")
                     headers = (
                         {"api-key": self.key}
                     )
@@ -81,19 +84,21 @@ class ServerManager:
                 # add params to the url without using urllib
                 # 双向数据流的传输是一直连接
                 if self.proxy_url:
-                    logging.info("使用代理连接Openai WebSocket")
+                    logger.info("使用代理连接Openai WebSocket")
                     proxy = Proxy.from_url(self.proxy_url)
                     async with proxy_connect(ws_url, extra_headers=headers, proxy=proxy) as openai_ws:
                         print("Connected to Openai WebSocket With Proxy.")
-                        await agent._send_session_update(openai_ws)  # 建立最初的连接，然后就保持连接了
+                        await agent._send_session_update(openai_ws, voice)  # 建立最初的连接，然后就保持连接了
+                        await agent._send_first_message(openai_ws)
                         await asyncio.gather(
                             agent._receive_from_client(websocket, openai_ws),
                             agent._send_to_client(websocket, openai_ws)
                         )
                 else:
-                    logging.info("直接连接Openai WebSocket")
+                    logger.info("直接连接Openai WebSocket")
                     async with websockets.connect(ws_url, extra_headers=headers) as openai_ws:
-                        await agent._send_session_update(openai_ws)
+                        await agent._send_session_update(openai_ws, voice)
+                        await agent._send_first_message(openai_ws)
                         await asyncio.gather(
                             agent._receive_from_client(websocket, openai_ws),
                             agent._send_to_client(websocket, openai_ws)
@@ -109,6 +114,7 @@ class ServerManager:
 
         @self.app.websocket("/ws/{agent_type}")
         async def websocket_endpoint(websocket: WebSocket, agent_type: str):
+            # 非realtime接口
             await websocket.accept()
 
             agent = self.agent_manager.get_agent(agent_type)
