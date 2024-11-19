@@ -66,7 +66,13 @@ class ServerManager:
             self.websocket_connections[agent_type][connection_id] = websocket
 
             try:
-                if self.openai_key:
+                if self.key: # 如果有azure_key
+                    logger.info(f"Azure OpenAI配置成功，使用Azure OpenAI的配置")
+                    headers = (
+                        {"api-key": self.key}
+                    )
+                    ws_url = f"{self.endpoint}/openai/realtime?api-version=2024-10-01-preview&deployment={self.deployment}"
+                else:
                     logger.info("OpenaiKey配置成功，使用Openai的配置")
                     headers = (
                         {
@@ -75,12 +81,6 @@ class ServerManager:
                         }
                     )
                     ws_url = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01"
-                else:
-                    logger.info(f"Azure OpenAI配置成功，使用Azure OpenAI的配置")
-                    headers = (
-                        {"api-key": self.key}
-                    )
-                    ws_url = f"{self.endpoint}/openai/realtime?api-version=2024-10-01-preview&deployment={self.deployment}"
                 # add params to the url without using urllib
                 # 双向数据流的传输是一直连接
                 if self.proxy_url:
