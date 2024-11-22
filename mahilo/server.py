@@ -1,5 +1,6 @@
 import os
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from websockets_proxy import Proxy, proxy_connect
 from typing import Dict
 import uvicorn
@@ -22,6 +23,14 @@ logger = logging.getLogger(__name__)
 class ServerManager:
     def __init__(self, agent_manager: AgentManager):
         self.app = FastAPI()
+        # Enable CORS
+        self.app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
         self.agent_manager = agent_manager
         self.websocket_connections: Dict[str, Dict[str, WebSocket]] = {}
         self.endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", None)
@@ -29,6 +38,7 @@ class ServerManager:
         self.key = os.getenv("AZURE_OPENAI_KEY", None)
         self.openai_key = os.getenv("OPENAI_API_KEY", None)
         self.proxy_url = os.getenv("PROXY_URL")
+        self.use_azure = os.getenv("USE_AZURE", True) # 是否使用Azure的的接口
         self.token_provider = None
 
         self.agent_manager.populate_can_contact_for_agents()
@@ -66,7 +76,7 @@ class ServerManager:
             self.websocket_connections[agent_type][connection_id] = websocket
 
             try:
-                if self.key: # 如果有azure_key
+                if self.use_azure: # 如果有azure_key
                     logger.info(f"Azure OpenAI配置成功，使用Azure OpenAI的配置")
                     headers = (
                         {"api-key": self.key}
@@ -176,8 +186,16 @@ class ServerManager:
             await websocket.close()
 
         @self.app.api_route("/ping", methods=["GET", "POST"])
-        async def root():
+        async def ping():
             return "Pong"
+
+        @self.app.api_route("/api/voice", methods=["GET", "POST"])
+        async def voice():
+            # openai和微软的声音是不一致的
+            if self.use_azure:
+                return ['amuch', 'dan', 'elan', 'marilyn', 'meadow', 'breeze', 'cove', 'ember', 'jupiter', 'alloy', 'echo', 'shimmer']
+            else:
+                return ["ash", "ballad", "coral", "sage", "verse"]
 
     async def _handle_inter_agent_communication(self):
         while True:
